@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - name: string (required)
+    //   - phone: string (required)
+    //   - isWinner: bool (required)
+    //   - createdAt: timestamp (optional)
+    //
+    // Collection: payments
+    // Document ID: paymentId
+    // Fields:
+    //   - userId: string (required)
+    //   - amount: number (required)
+    //   - date: string (required, YYYY-MM-DD)
+    //   - createdAt: timestamp (optional)
+    //
+    // Collection: lottery_results
+    // Document ID: resultId
+    // Fields:
+    //   - winnerId: string (required)
+    //   - amountWon: number (required)
+    //   - drawDate: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          ((request.auth.token.email == "srcomputer36@gmail.com" || request.auth.token.email == "shamima4480@gmail.com") && 
+           request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'phone', 'isWinner']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 15 &&
+             data.isWinner is bool;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['userId', 'amount', 'date']) &&
+             data.userId is string &&
+             data.amount is number && data.amount > 0 &&
+             data.date is string && data.date.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    function isValidLotteryResult(data) {
+      return data.keys().hasAll(['winnerId', 'amountWon', 'drawDate']) &&
+             data.winnerId is string &&
+             data.amountWon is number && data.amountWon >= 0 &&
+             data.drawDate is timestamp;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPayment(request.resource.data);
+      allow update: if isAuthenticated() && isValidPayment(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /lottery_results/{resultId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidLotteryResult(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /test/{testId} {
+      allow read: if true; // Allow connection test
+    }
+  }
+}
