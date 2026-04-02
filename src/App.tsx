@@ -1,28 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc,
-  doc, 
-  query, 
-  where, 
-  orderBy, 
-  getDocs,
-  serverTimestamp,
-  getDocFromServer,
-  setDoc,
-  writeBatch
-} from 'firebase/firestore';
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
-  signOut,
-  User as FirebaseUser
-} from 'firebase/auth';
-import { db, auth } from './firebase';
 import { User, Payment, LotteryResult } from './types';
 import { 
   Users, 
@@ -30,8 +6,6 @@ import {
   Trophy, 
   History, 
   Plus, 
-  LogOut, 
-  LogIn,
   CheckCircle2,
   XCircle,
   TrendingUp,
@@ -45,7 +19,6 @@ import {
   AlertTriangle,
   Search,
   Phone,
-  MoreHorizontal,
   Edit,
   Trash,
   Banknote,
@@ -63,7 +36,6 @@ import confetti from 'canvas-confetti';
 
 const safeGetDate = (date: any): Date => {
   if (!date) return new Date();
-  if (date.toDate && typeof date.toDate === 'function') return date.toDate();
   if (typeof date === 'string') {
     const parsed = parseISO(date);
     return isValid(parsed) ? parsed : new Date();
@@ -78,47 +50,6 @@ const safeFormatDate = (date: any, formatStr: string): string => {
 };
 
 // --- Components ---
-
-const ErrorBoundary = ({ children }: { children: React.ReactNode }) => {
-  const [hasError, setHasError] = useState(false);
-  const [errorInfo, setErrorInfo] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      if (event.error?.message?.includes('{"error":')) {
-        setHasError(true);
-        setErrorInfo(event.error.message);
-      }
-    };
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
-
-  if (hasError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-red-100">
-          <XCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-2">Security Error</h2>
-          <p className="text-gray-600 text-center mb-6">
-            You don't have permission to perform this action. Please check your account role.
-          </p>
-          <pre className="bg-gray-50 p-4 rounded-lg text-xs overflow-auto max-h-40 text-red-800 mb-6">
-            {errorInfo}
-          </pre>
-          <button 
-            onClick={() => window.location.reload()}
-            className="w-full py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition-colors"
-          >
-            Reload App
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
-};
 
 const StatCard = ({ title, value, icon: Icon, color, darkMode, trend }: { title: string, value: string | number, icon: any, color: string, darkMode: boolean, trend?: string }) => (
   <motion.div 
@@ -153,11 +84,18 @@ const StatCard = ({ title, value, icon: Icon, color, darkMode, trend }: { title:
 // --- Main App ---
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [members, setMembers] = useState<User[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [lotteryResults, setLotteryResults] = useState<LotteryResult[]>([]);
+  const [members, setMembers] = useState<User[]>(() => {
+    const saved = localStorage.getItem('members');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [payments, setPayments] = useState<Payment[]>(() => {
+    const saved = localStorage.getItem('payments');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [lotteryResults, setLotteryResults] = useState<LotteryResult[]>(() => {
+    const saved = localStorage.getItem('lotteryResults');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [activeTab, setActiveTab] = useState<'dashboard' | 'members' | 'deposits' | 'lottery' | 'history' | 'settings'>('dashboard');
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [isEditingMember, setIsEditingMember] = useState(false);
@@ -172,13 +110,18 @@ export default function App() {
   const [isLotteryRunning, setIsLotteryRunning] = useState(false);
   const [lotteryWinner, setLotteryWinner] = useState<User | null>(null);
   const [shufflingName, setShufflingName] = useState<string>('');
-  const [societyName, setSocietyName] = useState('Sanchay Samity');
+  const [societyName, setSocietyName] = useState(() => {
+    return localStorage.getItem('societyName') || 'Sanchay Samity';
+  });
   const [isSavingName, setIsSavingName] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [processingPayments, setProcessingPayments] = useState<Record<string, boolean>>({});
   const [wheelRotation, setWheelRotation] = useState(0);
 
   const [manualWinnerToConfirm, setManualWinnerToConfirm] = useState<User | null>(null);
+  const [isManualSelectionOpen, setIsManualSelectionOpen] = useState(false);
+  const [manualSearchTerm, setManualSearchTerm] = useState('');
+  const [lastPrizeWon, setLastPrizeWon] = useState(0);
   const [isResettingCycle, setIsResettingCycle] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -203,448 +146,190 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Auth
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
-    });
-    return unsubscribe;
-  }, []);
+    localStorage.setItem('members', JSON.stringify(members));
+  }, [members]);
 
-  // Connection Test
   useEffect(() => {
-    const testConnection = async () => {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        }
-      }
-    };
-    testConnection();
-  }, []);
+    localStorage.setItem('payments', JSON.stringify(payments));
+  }, [payments]);
 
-  // Data Sync
   useEffect(() => {
-    if (!user) return;
+    localStorage.setItem('lotteryResults', JSON.stringify(lotteryResults));
+  }, [lotteryResults]);
 
-    const unsubMembers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setMembers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-    }, (err) => handleFirestoreError(err, 'get', 'users'));
+  useEffect(() => {
+    localStorage.setItem('societyName', societyName);
+  }, [societyName]);
 
-    const unsubPayments = onSnapshot(collection(db, 'payments'), (snapshot) => {
-      setPayments(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Payment)));
-    }, (err) => handleFirestoreError(err, 'get', 'payments'));
-
-    const unsubLottery = onSnapshot(collection(db, 'lottery_results'), (snapshot) => {
-      const results = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as LotteryResult));
-      results.sort((a, b) => safeGetDate(b.drawDate).getTime() - safeGetDate(a.drawDate).getTime());
-      setLotteryResults(results);
-    }, (err) => handleFirestoreError(err, 'get', 'lottery_results'));
-
-    const unsubSettings = onSnapshot(doc(db, 'settings', 'general'), (doc) => {
-      if (doc.exists()) {
-        setSocietyName(doc.data().societyName || 'Sanchay Samity');
-      }
-    }, (err) => handleFirestoreError(err, 'get', 'settings/general'));
-
-    return () => {
-      unsubMembers();
-      unsubPayments();
-      unsubLottery();
-      unsubSettings();
-    };
-  }, [user]);
-
-  const handleFirestoreError = (error: any, operationType: string, path: string) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      operationType,
-      path,
-      authInfo: {
-        userId: auth.currentUser?.uid || 'anonymous',
-        email: auth.currentUser?.email || '',
-        emailVerified: auth.currentUser?.emailVerified || false,
-        isAnonymous: auth.currentUser?.isAnonymous || false,
-        tenantId: auth.currentUser?.tenantId || '',
-        providerInfo: auth.currentUser?.providerData.map(provider => ({
-          providerId: provider.providerId,
-          displayName: provider.displayName || '',
-          email: provider.email || '',
-          photoUrl: provider.photoURL || ''
-        })) || []
-      }
-    };
-    console.error('Firestore Error:', JSON.stringify(errInfo));
-    throw new Error(JSON.stringify(errInfo));
-  };
-
-  const login = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed", error);
-    }
-  };
-
-  const logout = () => signOut(auth);
-
-  const updateSocietyName = async (newName: string) => {
+  const updateSocietyName = (newName: string) => {
     setIsSavingName(true);
-    try {
-      const settingsRef = doc(db, 'settings', 'general');
-      await updateDoc(settingsRef, { societyName: newName });
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
-    } catch (err: any) {
-      // If doc doesn't exist, create it
-      if (err.code === 'not-found') {
-        try {
-          await setDoc(doc(db, 'settings', 'general'), { societyName: newName });
-          setSaveSuccess(true);
-          setTimeout(() => setSaveSuccess(false), 2000);
-        } catch (innerErr) {
-          handleFirestoreError(innerErr, 'create', 'settings/general');
-        }
-      } else {
-        handleFirestoreError(err, 'update', 'settings/general');
-      }
-    } finally {
+    setSocietyName(newName);
+    setSaveSuccess(true);
+    setTimeout(() => {
+      setSaveSuccess(false);
       setIsSavingName(false);
-    }
+    }, 1000);
   };
 
-  const manualWinnerSelect = async (winner: User) => {
-    if (isLotteryRunning) return;
+  const manualWinnerSelect = (winner: User) => {
+    if (!winner) return;
     
     const unprocessedPayments = payments.filter(p => !p.isProcessed);
     const totalAmount = unprocessedPayments.reduce((sum, p) => sum + p.amount, 0);
     const currentPot = totalAmount;
 
-    try {
-      const batch = writeBatch(db);
-      
-      // Add lottery result
-      const lotteryResultRef = doc(collection(db, 'lottery_results'));
-      batch.set(lotteryResultRef, {
-        winnerId: winner.id,
-        amountWon: currentPot,
-        drawDate: serverTimestamp(),
-        isProcessed: true
-      });
+    const newResult: LotteryResult = {
+      id: Math.random().toString(36).substr(2, 9),
+      winnerId: winner.id,
+      amountWon: currentPot,
+      drawDate: new Date().toISOString(),
+      isProcessed: true
+    };
 
-      // Mark all current payments as processed
-      unprocessedPayments.forEach(p => {
-        batch.update(doc(db, 'payments', p.id), { isProcessed: true });
-      });
-
-      // Update winner status
-      batch.update(doc(db, 'users', winner.id), { isWinner: true });
-      
-      // Check if this was the last person in the cycle
-      const remainingEligible = members.filter(m => !m.isWinner && m.id !== winner.id);
+    setLotteryResults(prev => [newResult, ...prev]);
+    setPayments(prev => prev.map(p => ({ ...p, isProcessed: true })));
+    setMembers(prev => {
+      const updated = prev.map(m => m.id === winner.id ? { ...m, isWinner: true } : m);
+      const remainingEligible = updated.filter(m => !m.isWinner);
       if (remainingEligible.length === 0) {
-        // Auto-reset cycle for next time
-        members.forEach(m => {
-          batch.update(doc(db, 'users', m.id), { isWinner: false });
-        });
+        return updated.map(m => ({ ...m, isWinner: false }));
       }
+      return updated;
+    });
 
-      await batch.commit();
-      
-      setLotteryWinner(winner);
-      setManualWinnerToConfirm(null);
-      
-      // Celebration!
-      confetti({
-        particleCount: 150,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#2563eb', '#10b981', '#f59e0b']
-      });
-
-      // Auto-refresh data
-      setTimeout(async () => {
-        const [mSnap, pSnap, lSnap] = await Promise.all([
-          getDocs(collection(db, 'users')),
-          getDocs(collection(db, 'payments')),
-          getDocs(collection(db, 'lottery_results'))
-        ]);
-        setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-        setPayments(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as Payment)));
-        const lResults = lSnap.docs.map(d => ({ id: d.id, ...d.data() } as LotteryResult));
-        lResults.sort((a, b) => safeGetDate(b.drawDate).getTime() - safeGetDate(a.drawDate).getTime());
-        setLotteryResults(lResults);
-      }, 1000);
-    } catch (err) {
-      handleFirestoreError(err, 'create', 'lottery_results');
-    }
+    setLastPrizeWon(currentPot);
+    setLotteryWinner(winner);
+    setManualWinnerToConfirm(null);
+    setManualSearchTerm('');
+    
+    confetti({
+      particleCount: 150,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ['#2563eb', '#10b981', '#f59e0b']
+    });
   };
 
-  const resetCycle = async () => {
+  const resetCycle = () => {
     if (isResettingCycle) return;
     setIsResettingCycle(true);
-    try {
-      const batch = writeBatch(db);
-      for (const m of members) {
-        batch.update(doc(db, 'users', m.id), { isWinner: false });
-      }
-      await batch.commit();
-      
-      // Refresh local state
-      setMembers(prev => prev.map(m => ({ ...m, isWinner: false })));
-    } catch (err) {
-      handleFirestoreError(err, 'update', 'users');
-    } finally {
-      setIsResettingCycle(false);
-    }
+    setMembers(prev => prev.map(m => ({ ...m, isWinner: false })));
+    setIsResettingCycle(false);
   };
 
-  const addMember = async (e: React.FormEvent) => {
+  const addMember = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await addDoc(collection(db, 'users'), {
-        ...newMember,
-        isWinner: false,
-        createdAt: new Date().toISOString()
-      });
-      setNewMember({ name: '', phone: '' });
-      setIsAddingMember(false);
-    } catch (err) {
-      handleFirestoreError(err, 'create', 'users');
-    }
+    if (!newMember.name || !newMember.phone) return;
+    const member: User = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newMember.name,
+      phone: newMember.phone,
+      isWinner: false,
+      createdAt: new Date().toISOString()
+    };
+    setMembers(prev => [...prev, member]);
+    setNewMember({ name: '', phone: '' });
+    setIsAddingMember(false);
   };
 
-  const updateMember = async (e: React.FormEvent) => {
+  const updateMember = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingMember) return;
-    try {
-      await updateDoc(doc(db, 'users', editingMember.id), {
-        name: editingMember.name,
-        phone: editingMember.phone
-      });
-      setIsEditingMember(false);
-      setEditingMember(null);
-    } catch (err) {
-      handleFirestoreError(err, 'update', 'users');
-    }
+    setMembers(prev => prev.map(m => m.id === editingMember.id ? editingMember : m));
+    setIsEditingMember(false);
+    setEditingMember(null);
   };
 
-  const deleteMember = async (id: string) => {
+  const deleteMember = (id: string) => {
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Member',
       message: 'Are you sure you want to delete this member? This action cannot be undone.',
       type: 'danger',
-      onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, 'users', id));
-          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-        } catch (err) {
-          handleFirestoreError(err, 'delete', 'users');
-        }
+      onConfirm: () => {
+        setMembers(prev => prev.filter(m => m.id !== id));
+        setPayments(prev => prev.filter(p => p.userId !== id));
+        setLotteryResults(prev => prev.filter(r => r.winnerId !== id));
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
       }
     });
   };
 
-  const togglePayment = async (userId: string, date: string) => {
+  const togglePayment = (userId: string, date: string) => {
     const key = `${userId}-${date}`;
     if (processingPayments[key]) return;
 
     setProcessingPayments(prev => ({ ...prev, [key]: true }));
-    const existing = payments.find(p => p.userId === userId && p.date === date && !p.isProcessed);
+    const existingIndex = payments.findIndex(p => p.userId === userId && p.date === date && !p.isProcessed);
     
-    try {
-      if (existing) {
-        await deleteDoc(doc(db, 'payments', existing.id));
-      } else {
-        await addDoc(collection(db, 'payments'), {
-          userId,
-          amount: 100,
-          date,
-          createdAt: new Date().toISOString(),
-          isProcessed: false
-        });
-      }
-    } catch (err) {
-      handleFirestoreError(err, existing ? 'delete' : 'create', 'payments');
-    } finally {
-      setProcessingPayments(prev => ({ ...prev, [key]: false }));
+    if (existingIndex > -1) {
+      setPayments(prev => prev.filter((_, i) => i !== existingIndex));
+    } else {
+      const newPayment: Payment = {
+        id: Math.random().toString(36).substr(2, 9),
+        userId,
+        amount: 100,
+        date,
+        createdAt: new Date().toISOString(),
+        isProcessed: false
+      };
+      setPayments(prev => [...prev, newPayment]);
     }
+    setProcessingPayments(prev => ({ ...prev, [key]: false }));
   };
 
-  const runLottery = async () => {
+  const runLottery = () => {
     if (members.length === 0) return;
     
     setIsLotteryRunning(true);
     setLotteryWinner(null);
 
-    // Filter eligible members (those who haven't won in this cycle)
     let eligible = members.filter(m => !m.isWinner);
     
-    // If everyone has won, reset the cycle automatically
     if (eligible.length === 0) {
-      try {
-        const batch = writeBatch(db);
-        for (const m of members) {
-          batch.update(doc(db, 'users', m.id), { isWinner: false });
-        }
-        await batch.commit();
-        eligible = [...members];
-        setMembers(prev => prev.map(m => ({ ...m, isWinner: false })));
-      } catch (err) {
-        handleFirestoreError(err, 'update', 'users');
-        setIsLotteryRunning(false);
-        return;
-      }
+      setMembers(prev => prev.map(m => ({ ...m, isWinner: false })));
+      eligible = [...members];
     }
 
-    // Start rotation
     const newRotation = wheelRotation + 1800 + Math.random() * 360;
     setWheelRotation(newRotation);
 
-    // Shuffle names effect
     const shuffleInterval = setInterval(() => {
       const randomMember = eligible[Math.floor(Math.random() * eligible.length)];
       setShufflingName(randomMember.name);
     }, 80);
 
-    // Faster draw (2s to match rotation)
-    setTimeout(async () => {
+    setTimeout(() => {
       clearInterval(shuffleInterval);
       const winner = eligible[Math.floor(Math.random() * eligible.length)];
-      const unprocessedPayments = payments.filter(p => !p.isProcessed);
-      const totalAmount = unprocessedPayments.reduce((sum, p) => sum + p.amount, 0);
-      const currentPot = totalAmount;
-
-      try {
-        const batch = writeBatch(db);
-        
-        // Add lottery result
-        const lotteryResultRef = doc(collection(db, 'lottery_results'));
-        batch.set(lotteryResultRef, {
-          winnerId: winner.id,
-          amountWon: currentPot,
-          drawDate: serverTimestamp(),
-          isProcessed: true
-        });
-
-        // Mark all current payments as processed
-        unprocessedPayments.forEach(p => {
-          batch.update(doc(db, 'payments', p.id), { isProcessed: true });
-        });
-
-        // Update winner status
-        batch.update(doc(db, 'users', winner.id), { isWinner: true });
-        
-        // Check if this was the last person in the cycle
-        const remainingEligible = eligible.filter(m => m.id !== winner.id);
-        if (remainingEligible.length === 0) {
-          // Auto-reset cycle for next time
-          members.forEach(m => {
-            batch.update(doc(db, 'users', m.id), { isWinner: false });
-          });
-        }
-
-        await batch.commit();
-        
-        setLotteryWinner(winner);
-        setIsLotteryRunning(false);
-        setShufflingName('');
-        
-        // Celebration!
-        confetti({
-          particleCount: 150,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#2563eb', '#10b981', '#f59e0b']
-        });
-
-        // Auto-refresh data after a short delay to ensure UI is in sync
-        setTimeout(async () => {
-          const [mSnap, pSnap, lSnap] = await Promise.all([
-            getDocs(collection(db, 'users')),
-            getDocs(collection(db, 'payments')),
-            getDocs(collection(db, 'lottery_results'))
-          ]);
-          setMembers(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-          setPayments(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as Payment)));
-          const lResults = lSnap.docs.map(d => ({ id: d.id, ...d.data() } as LotteryResult));
-          lResults.sort((a, b) => safeGetDate(b.drawDate).getTime() - safeGetDate(a.drawDate).getTime());
-          setLotteryResults(lResults);
-        }, 1500);
-      } catch (err) {
-        handleFirestoreError(err, 'create', 'lottery_results');
-        setIsLotteryRunning(false);
-        setShufflingName('');
-      }
+      manualWinnerSelect(winner);
+      setIsLotteryRunning(false);
+      setShufflingName('');
     }, 1500);
   };
 
-  const resetApp = async () => {
+  const resetApp = () => {
     setConfirmDialog({
       isOpen: true,
       title: 'Reset Entire App',
       message: 'Are you sure you want to reset the entire app? This will delete all members, payments, and lottery results. This action cannot be undone!',
       type: 'danger',
-      onConfirm: async () => {
+      onConfirm: () => {
         setIsResetting(true);
         setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-        try {
-          const collections = ['users', 'payments', 'lottery_results'];
-          for (const collName of collections) {
-            const snapshot = await getDocs(collection(db, collName));
-            const batch = writeBatch(db);
-            snapshot.docs.forEach((doc) => {
-              batch.delete(doc.ref);
-            });
-            await batch.commit();
-          }
-          setActiveTab('dashboard');
-        } catch (err) {
-          console.error("Reset failed", err);
-        } finally {
+        setTimeout(() => {
+          setMembers([]);
+          setPayments([]);
+          setLotteryResults([]);
+          setSocietyName('Sanchay Samity');
+          localStorage.clear();
           setIsResetting(false);
-        }
+          setActiveTab('dashboard');
+        }, 1000);
       }
     });
   };
-
-  if (loading) {
-    return (
-      <div className={cn("min-h-screen flex items-center justify-center transition-colors", darkMode ? "bg-slate-950" : "bg-slate-50")}>
-        <RefreshCw className="w-8 h-8 text-blue-600 animate-spin" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className={cn("min-h-screen flex items-center justify-center p-4 transition-colors", darkMode ? "bg-slate-950" : "bg-gradient-to-br from-blue-50 to-white")}>
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={cn("p-10 rounded-3xl shadow-2xl max-w-md w-full text-center border transition-colors", darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-blue-100")}
-        >
-          <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-900/20">
-            <Wallet className="w-10 h-10 text-white" />
-          </div>
-          <h1 className={cn("text-3xl font-bold mb-2", darkMode ? "text-white" : "text-gray-900")}>{societyName}</h1>
-          <p className="text-gray-500 mb-8">Manage your savings society efficiently and fairly with our automated lottery system.</p>
-          <button 
-            onClick={login}
-            className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 active:scale-95"
-          >
-            <LogIn className="w-5 h-5" />
-            Sign in with Google
-          </button>
-        </motion.div>
-      </div>
-    );
-  }
 
   const totalCollected = payments.filter(p => !p.isProcessed).reduce((sum, p) => sum + p.amount, 0);
   const totalPaidOut = lotteryResults.filter(r => !r.isProcessed).reduce((sum, r) => sum + r.amountWon, 0);
@@ -667,8 +352,7 @@ export default function App() {
   const cycleProgress = Math.min(100, (daysPassed / 10) * 100);
 
   return (
-    <ErrorBoundary>
-      <div className={cn("min-h-screen flex flex-col md:flex-row pb-20 md:pb-0 transition-colors duration-300", darkMode ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-900")}>
+    <div className={cn("min-h-screen flex flex-col md:flex-row pb-20 md:pb-0 transition-colors duration-300", darkMode ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-900")}>
         {/* Mobile Header */}
         <header className={cn("md:hidden border-b px-6 py-4 flex items-center justify-between sticky top-0 z-30 transition-colors", darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-gray-100")}>
           <div className="flex items-center gap-2">
@@ -680,10 +364,6 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button onClick={() => setDarkMode(!darkMode)} className={cn("p-2 rounded-lg transition-colors", darkMode ? "bg-slate-800 text-yellow-400" : "bg-slate-100 text-slate-600")}>
               {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-            <img src={user.photoURL || ''} className="w-8 h-8 rounded-full border border-blue-100" />
-            <button onClick={logout} className="text-red-500 p-1">
-              <LogOut className="w-5 h-5" />
             </button>
           </div>
         </header>
@@ -731,20 +411,6 @@ export default function App() {
               {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               {darkMode ? 'Light Mode' : 'Dark Mode'}
             </button>
-            <div className="flex items-center gap-3 px-2 mb-4">
-              <img src={user.photoURL || ''} className="w-10 h-10 rounded-full border-2 border-blue-100" />
-              <div className="overflow-hidden">
-                <p className={cn("text-sm font-bold truncate", darkMode ? "text-white" : "text-gray-900")}>{user.displayName}</p>
-                <p className="text-xs text-gray-500 truncate">{user.email}</p>
-              </div>
-            </div>
-            <button 
-              onClick={logout}
-              className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all font-medium"
-            >
-              <LogOut className="w-5 h-5" />
-              Logout
-            </button>
           </div>
         </nav>
 
@@ -786,7 +452,7 @@ export default function App() {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div className="space-y-1">
                     <h2 className={cn("text-3xl md:text-4xl font-black tracking-tight", darkMode ? "text-white" : "text-slate-900")}>
-                      Welcome back, <span className="text-blue-600">{user?.displayName?.split(' ')[0]}</span>! 👋
+                      Welcome to <span className="text-blue-600">{societyName}</span>! 👋
                     </h2>
                     <p className="text-slate-500 font-medium">Here's what's happening in your society today.</p>
                   </div>
@@ -1146,9 +812,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => {
-                        getDocs(collection(db, 'payments')).then(snapshot => {
-                          setPayments(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Payment)));
-                        });
+                        // In localStorage mode, data is already in state
                       }}
                       className={cn("p-2.5 rounded-xl transition-all hover:rotate-180 duration-500", darkMode ? "bg-slate-800 text-slate-400 hover:bg-slate-700" : "bg-slate-100 text-slate-500 hover:bg-slate-200")}
                       title="Refresh Data"
@@ -1443,22 +1107,17 @@ export default function App() {
                       Manual Winner Selection
                     </label>
                     {members.filter(m => !m.isWinner).length > 0 ? (
-                      <select 
-                        onChange={(e) => {
-                          const member = members.find(m => m.id === e.target.value);
-                          if (member) setManualWinnerToConfirm(member);
-                        }}
+                      <button 
+                        onClick={() => setIsManualSelectionOpen(true)}
+                        disabled={isLotteryRunning}
                         className={cn(
-                          "w-full px-4 py-3 rounded-2xl border outline-none transition-all focus:ring-2 focus:ring-blue-500 font-bold text-sm",
-                          darkMode ? "bg-slate-800 border-slate-700 text-white" : "bg-white border-slate-100 text-slate-900 shadow-sm"
+                          "w-full px-4 py-3 rounded-2xl border font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50",
+                          darkMode ? "bg-slate-800 border-slate-700 text-blue-400 hover:bg-slate-700" : "bg-white border-slate-100 text-blue-600 hover:bg-blue-50"
                         )}
-                        value=""
                       >
-                        <option value="" disabled>Select a member...</option>
-                        {members.filter(m => !m.isWinner).map(m => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
-                        ))}
-                      </select>
+                        <Users className="w-4 h-4" />
+                        Select Winner Manually
+                      </button>
                     ) : (
                       <button 
                         onClick={resetCycle}
@@ -1475,6 +1134,89 @@ export default function App() {
                     <p className="text-[10px] text-slate-400 mt-2 italic">Only members who haven't won this cycle are listed.</p>
                   </div>
                 </div>
+
+                {/* Manual Selection Modal */}
+                <AnimatePresence>
+                  {isManualSelectionOpen && (
+                    <motion.div 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+                    >
+                      <motion.div 
+                        initial={{ scale: 0.9, y: 20 }}
+                        animate={{ scale: 1, y: 0 }}
+                        className={cn("p-6 sm:p-8 rounded-[2.5rem] shadow-2xl max-w-md w-full transition-colors relative overflow-hidden flex flex-col max-h-[80vh]", darkMode ? "bg-slate-900 border border-slate-800" : "bg-white")}
+                      >
+                        <div className="absolute top-0 left-0 w-full h-2 bg-blue-600" />
+                        <div className="flex justify-between items-center mb-6">
+                          <div>
+                            <h3 className={cn("text-xl sm:text-2xl font-black tracking-tight", darkMode ? "text-white" : "text-slate-900")}>Select Winner</h3>
+                            <p className="text-slate-500 text-xs sm:text-sm">Choose a member to manually assign the pot</p>
+                          </div>
+                          <button 
+                            onClick={() => setIsManualSelectionOpen(false)}
+                            className={cn("p-2 rounded-xl transition-colors", darkMode ? "bg-slate-800 text-slate-400 hover:text-white" : "bg-slate-100 text-slate-500 hover:text-slate-900")}
+                          >
+                            <XCircle className="w-6 h-6" />
+                          </button>
+                        </div>
+
+                        <div className="relative mb-4">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                          <input 
+                            type="text"
+                            placeholder="Search members..."
+                            value={manualSearchTerm}
+                            onChange={(e) => setManualSearchTerm(e.target.value)}
+                            className={cn(
+                              "w-full pl-10 pr-4 py-3 rounded-xl border outline-none transition-all focus:ring-2 focus:ring-blue-500 text-sm",
+                              darkMode ? "bg-slate-800 border-slate-700 text-white placeholder:text-slate-500" : "bg-slate-50 border-slate-100 text-slate-900"
+                            )}
+                          />
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                          {members
+                            .filter(m => !m.isWinner)
+                            .filter(m => m.name.toLowerCase().includes(manualSearchTerm.toLowerCase()) || m.phone.includes(manualSearchTerm))
+                            .map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => {
+                                  setManualWinnerToConfirm(m);
+                                  setIsManualSelectionOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full flex items-center justify-between p-4 rounded-2xl transition-all border",
+                                  darkMode ? "bg-slate-800/50 border-slate-800 hover:bg-slate-800 hover:border-slate-700" : "bg-slate-50 border-slate-100 hover:bg-white hover:border-blue-200 hover:shadow-md"
+                                )}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm", darkMode ? "bg-slate-900 text-slate-400" : "bg-white text-slate-400 shadow-sm")}>
+                                    {m.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="text-left">
+                                    <p className={cn("font-bold text-sm", darkMode ? "text-white" : "text-slate-900")}>{m.name}</p>
+                                    <p className="text-[10px] text-slate-500 font-medium">{m.phone}</p>
+                                  </div>
+                                </div>
+                                <div className="w-8 h-8 rounded-full bg-blue-600/10 flex items-center justify-center">
+                                  <Plus className="w-4 h-4 text-blue-600" />
+                                </div>
+                              </button>
+                            ))}
+                          {members.filter(m => !m.isWinner).length === 0 && (
+                            <div className="text-center py-10">
+                              <p className="text-slate-500 italic text-sm">No eligible members found.</p>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <AnimatePresence>
                   {manualWinnerToConfirm && (
@@ -1504,7 +1246,11 @@ export default function App() {
                             Cancel
                           </button>
                           <button 
-                            onClick={() => manualWinnerSelect(manualWinnerToConfirm)}
+                            onClick={() => {
+                              if (manualWinnerToConfirm) {
+                                manualWinnerSelect(manualWinnerToConfirm);
+                              }
+                            }}
                             className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20"
                           >
                             Confirm
@@ -1529,7 +1275,7 @@ export default function App() {
                         <p className={cn("text-2xl sm:text-4xl font-black mb-3 sm:mb-4", darkMode ? "text-white" : "text-gray-900")}>{lotteryWinner.name}</p>
                         <div className="bg-emerald-50 dark:bg-emerald-900/30 p-4 sm:p-6 rounded-2xl mb-4 sm:mb-6">
                           <p className="text-[10px] sm:text-sm text-emerald-600 dark:text-emerald-400 font-bold uppercase mb-1">Prize Amount</p>
-                          <p className="text-3xl sm:text-5xl font-black text-emerald-700 dark:text-emerald-300">৳{lotteryResults[0]?.amountWon || currentBalance}</p>
+                          <p className="text-3xl sm:text-5xl font-black text-emerald-700 dark:text-emerald-300">৳{lastPrizeWon}</p>
                         </div>
                         <div className="mb-6 sm:mb-8 p-2 sm:p-3 bg-blue-50 dark:bg-blue-900/30 rounded-xl border border-blue-100 dark:border-blue-800">
                           <p className="text-blue-600 dark:text-blue-400 font-bold text-xs sm:text-sm">🔄 New 10-day cycle has started!</p>
@@ -1643,38 +1389,10 @@ export default function App() {
               >
                 <div className="flex flex-col gap-1">
                   <h2 className={cn("text-3xl font-black tracking-tight", darkMode ? "text-white" : "text-slate-900")}>Settings</h2>
-                  <p className="text-slate-500 font-medium">Manage your society preferences and account</p>
+                  <p className="text-slate-500 font-medium">Manage your society preferences</p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-6">
-                  {/* Profile Section */}
-                  <div className={cn("p-8 rounded-[2.5rem] shadow-xl border transition-all overflow-hidden relative", darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-100")}>
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full -mr-16 -mt-16 blur-3xl" />
-                    <div className="flex flex-col sm:flex-row items-center gap-6 relative z-10">
-                      <div className="relative">
-                        <img src={user.photoURL || ''} className="w-24 h-24 rounded-3xl border-4 border-blue-500/20 shadow-lg" />
-                        <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-emerald-500 rounded-xl border-4 border-white dark:border-slate-900 flex items-center justify-center">
-                          <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                        </div>
-                      </div>
-                      <div className="text-center sm:text-left flex-1">
-                        <h3 className={cn("text-2xl font-black mb-1", darkMode ? "text-white" : "text-slate-900")}>{user.displayName}</h3>
-                        <p className="text-slate-500 font-medium mb-4">{user.email}</p>
-                        <div className="flex flex-wrap justify-center sm:justify-start gap-2">
-                          <span className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-black uppercase tracking-wider rounded-lg">Administrator</span>
-                          <span className="px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 text-[10px] font-black uppercase tracking-wider rounded-lg">Verified Account</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={logout}
-                        className="px-6 py-3 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-2xl font-bold text-sm hover:bg-red-100 dark:hover:bg-red-900/40 transition-all flex items-center gap-2"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        Sign Out
-                      </button>
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Society Info */}
                     <div className={cn("p-8 rounded-[2.5rem] shadow-xl border transition-all", darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-100")}>
@@ -2031,6 +1749,5 @@ export default function App() {
           )}
         </AnimatePresence>
       </div>
-    </ErrorBoundary>
-  );
+    );
 }
